@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
 	"github.com/net2share/dnstm/internal/actions"
 	"github.com/net2share/dnstm/internal/binary"
@@ -13,7 +14,6 @@ import (
 	"github.com/net2share/dnstm/internal/proxy"
 	"github.com/net2share/dnstm/internal/router"
 	"github.com/net2share/dnstm/internal/system"
-	"github.com/net2share/dnstm/internal/transport"
 	"github.com/net2share/dnstm/internal/updater"
 )
 
@@ -89,59 +89,62 @@ func HandleInstall(ctx *actions.Context) error {
 		ctx.Output.Status("DNS router service created")
 	}
 
-	// Step 5: Install binaries
+	// Step 5: Verify transport binaries are present
 	ctx.Output.Println()
-	ctx.Output.Info("Installing transport binaries...")
+	ctx.Output.Info("Verifying transport binaries...")
 
-	// Status callback routes output through the context
-	statusFn := func(msg string) { ctx.Output.Status(msg) }
-
-	if err := transport.EnsureDnsttInstalledWithStatus(statusFn); err != nil {
-		return fmt.Errorf("failed to install dnstt-server: %w", err)
+	mgr := binary.NewDefaultManager()
+	serverBinaries := []binary.BinaryType{
+		binary.BinaryDNSTTServer,
+		binary.BinarySlipstreamServer,
+		binary.BinarySSServer,
+		binary.BinarySSHTunUser,
 	}
 
-	if err := transport.EnsureSlipstreamInstalledWithStatus(statusFn); err != nil {
-		return fmt.Errorf("failed to install slipstream-server: %w", err)
-	}
-
-	if err := transport.EnsureShadowsocksInstalledWithStatus(statusFn); err != nil {
-		return fmt.Errorf("failed to install ssserver: %w", err)
-	}
-
-	if err := transport.EnsureSSHTunUserInstalledWithStatus(statusFn); err != nil {
-		ctx.Output.Warning("sshtun-user: " + err.Error())
-	}
-
-	if !proxy.IsMicrosocksInstalled() {
-		ctx.Output.Info("Installing microsocks...")
-		if err := proxy.InstallMicrosocks(nil); err != nil {
-			return fmt.Errorf("failed to install microsocks: %w", err)
+	for _, binType := range serverBinaries {
+		path, err := mgr.GetPath(binType)
+		if err != nil {
+			expectedPath := filepath.Join(mgr.BinDir(), string(binType))
+			def, _ := binary.GetDef(binType)
+			ctx.Output.Warning(fmt.Sprintf("%s not found — expected at %s (or set %s)", binType, expectedPath, def.EnvVar))
+		} else {
+			ctx.Output.Status(fmt.Sprintf("%s found at %s", binType, path))
 		}
 	}
-	// Ensure microsocks service is configured and running
-	if !proxy.IsMicrosocksRunning() {
-		ctx.Output.Info("Configuring microsocks service...")
-		port, err := proxy.FindAvailablePort()
-		if err != nil {
-			ctx.Output.Warning("Could not find available port: " + err.Error())
-		} else {
-			cfg.Proxy.Port = port
-			cfg.UpdateSocksBackendPort(port)
-			if err := cfg.Save(); err != nil {
-				ctx.Output.Warning("Failed to save proxy port: " + err.Error())
-			}
-			if err := proxy.ConfigureMicrosocks(port); err != nil {
-				ctx.Output.Warning("microsocks service config: " + err.Error())
+
+	// Microsocks: verify presence and configure if found
+	microsocksPath, microsocksErr := mgr.GetPath(binary.BinaryMicrosocks)
+	if microsocksErr != nil {
+		expectedPath := filepath.Join(mgr.BinDir(), string(binary.BinaryMicrosocks))
+		def, _ := binary.GetDef(binary.BinaryMicrosocks)
+		ctx.Output.Warning(fmt.Sprintf("%s not found — expected at %s (or set %s)", binary.BinaryMicrosocks, expectedPath, def.EnvVar))
+	} else {
+		ctx.Output.Status(fmt.Sprintf("%s found at %s", binary.BinaryMicrosocks, microsocksPath))
+		// Ensure microsocks service is configured and running
+		if !proxy.IsMicrosocksRunning() {
+			ctx.Output.Info("Configuring microsocks service...")
+			port, err := proxy.FindAvailablePort()
+			if err != nil {
+				ctx.Output.Warning("Could not find available port: " + err.Error())
 			} else {
-				if err := proxy.StartMicrosocks(); err != nil {
-					ctx.Output.Warning("microsocks service start: " + err.Error())
+				cfg.Proxy.Port = port
+				cfg.UpdateSocksBackendPort(port)
+				if err := cfg.Save(); err != nil {
+					ctx.Output.Warning("Failed to save proxy port: " + err.Error())
+				}
+				if err := proxy.ConfigureMicrosocks(port); err != nil {
+					ctx.Output.Warning("microsocks service config: " + err.Error())
 				} else {
-					ctx.Output.Status(fmt.Sprintf("microsocks installed and running on port %d", port))
+					if err := proxy.StartMicrosocks(); err != nil {
+						ctx.Output.Warning("microsocks service start: " + err.Error())
+					} else {
+						ctx.Output.Status(fmt.Sprintf("microsocks running on port %d", port))
+					}
 				}
 			}
+		} else {
+			ctx.Output.Status("microsocks already running")
 		}
-	} else {
-		ctx.Output.Status("microsocks already running")
 	}
 
 	// Step 6: Configure firewall

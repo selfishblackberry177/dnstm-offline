@@ -11,8 +11,7 @@ import (
 // StatusFunc is a callback for reporting installation status messages.
 type StatusFunc func(message string)
 
-// EnsureTransportBinariesInstalled checks and installs required binaries for a transport type.
-// This function accepts the new config.TransportType.
+// EnsureTransportBinariesInstalled checks that required binaries for a transport type are present.
 func EnsureTransportBinariesInstalled(transport config.TransportType) error {
 	switch transport {
 	case config.TransportSlipstream:
@@ -24,7 +23,7 @@ func EnsureTransportBinariesInstalled(transport config.TransportType) error {
 	}
 }
 
-// EnsureBackendBinariesInstalled checks and installs required binaries for a backend type.
+// EnsureBackendBinariesInstalled checks that required binaries for a backend type are present.
 func EnsureBackendBinariesInstalled(backend config.BackendType) error {
 	switch backend {
 	case config.BackendShadowsocks:
@@ -34,44 +33,44 @@ func EnsureBackendBinariesInstalled(backend config.BackendType) error {
 	}
 }
 
-// EnsureDnsttInstalled installs dnstt-server if not present.
+// EnsureDnsttInstalled checks that dnstt-server is present.
 func EnsureDnsttInstalled() error {
 	return EnsureDnsttInstalledWithStatus(nil)
 }
 
-// EnsureDnsttInstalledWithStatus installs dnstt-server with status callback.
+// EnsureDnsttInstalledWithStatus checks that dnstt-server is present with status callback.
 func EnsureDnsttInstalledWithStatus(statusFn StatusFunc) error {
-	return ensureBinaryInstalled(binary.BinaryDNSTTServer, "dnstt-server", statusFn)
+	return ensureBinaryPresent(binary.BinaryDNSTTServer, "dnstt-server", statusFn)
 }
 
-// EnsureSlipstreamInstalled installs slipstream-server if not present.
+// EnsureSlipstreamInstalled checks that slipstream-server is present.
 func EnsureSlipstreamInstalled() error {
 	return EnsureSlipstreamInstalledWithStatus(nil)
 }
 
-// EnsureSlipstreamInstalledWithStatus installs slipstream-server with status callback.
+// EnsureSlipstreamInstalledWithStatus checks that slipstream-server is present with status callback.
 func EnsureSlipstreamInstalledWithStatus(statusFn StatusFunc) error {
-	return ensureBinaryInstalled(binary.BinarySlipstreamServer, "slipstream-server", statusFn)
+	return ensureBinaryPresent(binary.BinarySlipstreamServer, "slipstream-server", statusFn)
 }
 
-// EnsureShadowsocksInstalled installs ssserver if not present.
+// EnsureShadowsocksInstalled checks that ssserver is present.
 func EnsureShadowsocksInstalled() error {
 	return EnsureShadowsocksInstalledWithStatus(nil)
 }
 
-// EnsureShadowsocksInstalledWithStatus installs ssserver with status callback.
+// EnsureShadowsocksInstalledWithStatus checks that ssserver is present with status callback.
 func EnsureShadowsocksInstalledWithStatus(statusFn StatusFunc) error {
-	return ensureBinaryInstalled(binary.BinarySSServer, "ssserver", statusFn)
+	return ensureBinaryPresent(binary.BinarySSServer, "ssserver", statusFn)
 }
 
-// EnsureSSHTunUserInstalled installs sshtun-user if not present.
+// EnsureSSHTunUserInstalled checks that sshtun-user is present.
 func EnsureSSHTunUserInstalled() error {
 	return EnsureSSHTunUserInstalledWithStatus(nil)
 }
 
-// EnsureSSHTunUserInstalledWithStatus installs sshtun-user with status callback.
+// EnsureSSHTunUserInstalledWithStatus checks that sshtun-user is present with status callback.
 func EnsureSSHTunUserInstalledWithStatus(statusFn StatusFunc) error {
-	return ensureBinaryInstalled(binary.BinarySSHTunUser, "sshtun-user", statusFn)
+	return ensureBinaryPresent(binary.BinarySSHTunUser, "sshtun-user", statusFn)
 }
 
 // IsSSHTunUserInstalled checks if sshtun-user binary is installed.
@@ -81,20 +80,19 @@ func IsSSHTunUserInstalled() bool {
 	return err == nil
 }
 
-// ensureBinaryInstalled uses the binary manager to ensure a binary is available.
-func ensureBinaryInstalled(binType binary.BinaryType, displayName string, statusFn StatusFunc) error {
+// ensureBinaryPresent checks that a binary exists using the binary manager.
+func ensureBinaryPresent(binType binary.BinaryType, displayName string, statusFn StatusFunc) error {
 	mgr := binary.NewDefaultManager()
 
-	// EnsureInstalled downloads if needed
-	path, err := mgr.EnsureInstalled(binType)
+	path, err := mgr.GetPath(binType)
 	if err != nil {
-		return fmt.Errorf("failed to install %s: %w", displayName, err)
+		return fmt.Errorf("%s not found: %w", displayName, err)
 	}
 
-	log.Debug("%s installed at %s", displayName, path)
+	log.Debug("%s found at %s", displayName, path)
 
 	if statusFn != nil {
-		statusFn(fmt.Sprintf("%s installed", displayName))
+		statusFn(fmt.Sprintf("%s ready", displayName))
 	}
 	return nil
 }

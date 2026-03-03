@@ -5,15 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"strings"
-	"sync"
-	"time"
 
 	"github.com/net2share/dnstm/internal/actions"
 	"github.com/net2share/dnstm/internal/config"
 	"github.com/net2share/dnstm/internal/router"
 	"github.com/net2share/dnstm/internal/transport"
-	"github.com/net2share/dnstm/internal/updater"
 	"github.com/net2share/dnstm/internal/version"
 	"github.com/net2share/go-corelib/tui"
 )
@@ -88,90 +84,6 @@ func RunInteractive() error {
 	return runMainMenu()
 }
 
-// Update check caching for session
-var (
-	updateCheckCache   *updater.UpdateReport
-	updateCheckDone    bool
-	updateCheckMutex   sync.Mutex
-	updateCheckStarted bool
-)
-
-const updateCheckTimeout = 15 * time.Second
-
-// checkForUpdatesBanner returns a banner message if updates are available.
-// On first call, runs a background check and waits up to timeout.
-// On subsequent calls, returns cached result immediately.
-func checkForUpdatesBanner() string {
-	updateCheckMutex.Lock()
-
-	if updateCheckDone {
-		report := updateCheckCache
-		updateCheckMutex.Unlock()
-		if report == nil || !report.HasUpdates() {
-			return ""
-		}
-		return formatUpdateBanner(report)
-	}
-
-	// Start background check if not started
-	if !updateCheckStarted {
-		updateCheckStarted = true
-		done := make(chan struct{})
-		go func() {
-			report, _ := updater.CheckForUpdates(version.Version, updater.UpdateOptions{})
-			updateCheckMutex.Lock()
-			updateCheckCache = report
-			updateCheckDone = true
-			updateCheckMutex.Unlock()
-			close(done)
-		}()
-		updateCheckMutex.Unlock()
-
-		// Wait for the check to complete or timeout
-		select {
-		case <-done:
-		case <-time.After(updateCheckTimeout):
-		}
-
-		// Return whatever we have
-		updateCheckMutex.Lock()
-		report := updateCheckCache
-		updateCheckMutex.Unlock()
-		if report == nil || !report.HasUpdates() {
-			return ""
-		}
-		return formatUpdateBanner(report)
-	}
-
-	updateCheckMutex.Unlock()
-	return ""
-}
-
-// formatUpdateBanner formats the update banner message.
-func formatUpdateBanner(report *updater.UpdateReport) string {
-	if report == nil || !report.HasUpdates() {
-		return ""
-	}
-
-	var parts []string
-
-	if report.DnstmUpdate != nil {
-		parts = append(parts, fmt.Sprintf("dnstm %s -> %s",
-			report.DnstmUpdate.Current, report.DnstmUpdate.Latest))
-	}
-
-	for _, bu := range report.BinaryUpdates {
-		current := bu.CurrentVersion
-		if current == "" {
-			current = "?"
-		}
-		parts = append(parts, fmt.Sprintf("%s %s -> %s",
-			bu.Binary, current, bu.LatestVersion))
-	}
-
-	return fmt.Sprintf("Updates available: %s", strings.Join(parts, ", "))
-}
-
 // buildTunnelSummary builds a summary string for the main menu header.
 func buildTunnelSummary() string {
 	cfg, err := config.Load()
@@ -214,16 +126,10 @@ func runMainMenu() error {
 			// Build tunnel summary for header
 			header = buildTunnelSummary()
 
-			// Check for updates (async, cached)
-			if updateBanner := checkForUpdatesBanner(); updateBanner != "" {
-				description = updateBanner
-			}
-
 			// Fully installed - show all options
 			options = append(options, tui.MenuOption{Label: "Tunnels →", Value: actions.ActionTunnel})
 			options = append(options, tui.MenuOption{Label: "Backends →", Value: actions.ActionBackend})
 			options = append(options, tui.MenuOption{Label: "Router →", Value: actions.ActionRouter})
-			options = append(options, tui.MenuOption{Label: "Update", Value: actions.ActionUpdate})
 			options = append(options, tui.MenuOption{Label: "Uninstall", Value: actions.ActionUninstall})
 			options = append(options, tui.MenuOption{Label: "", Separator: true})
 			options = append(options, tui.MenuOption{Label: "External Tools", Separator: true})
@@ -274,20 +180,6 @@ func handleMainMenuChoice(choice string) error {
 			return errCancelled
 		}
 		// No WaitForEnter needed - progress view handles its own dismissal
-		return errCancelled
-	case actions.ActionUpdate:
-		if err := RunAction(actions.ActionUpdate); err != nil {
-			if err == errCancelled {
-				return errCancelled
-			}
-			return err
-		}
-		// Clear update cache after update
-		updateCheckMutex.Lock()
-		updateCheckCache = nil
-		updateCheckDone = false
-		updateCheckStarted = false
-		updateCheckMutex.Unlock()
 		return errCancelled
 	case actions.ActionUninstall:
 		if err := RunAction(actions.ActionUninstall); err != nil {
