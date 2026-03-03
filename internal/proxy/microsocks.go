@@ -16,11 +16,9 @@ const (
 	MicrosocksBindAddr    = "127.0.0.1"
 )
 
-// InstallMicrosocks downloads and installs the microsocks binary.
-func InstallMicrosocks(progressFn func(downloaded, total int64)) error {
-	mgr := binary.NewDefaultManager()
-	_, err := mgr.EnsureInstalled(binary.BinaryMicrosocks)
-	return err
+// IsMicrosocksPresent checks if the microsocks binary exists (alias for IsMicrosocksInstalled).
+func IsMicrosocksPresent() bool {
+	return IsMicrosocksInstalled()
 }
 
 // ConfigureMicrosocks creates the systemd service for microsocks with the specified port.

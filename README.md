@@ -95,9 +95,27 @@ t.example.com.   IN  NS  ns.example.com.
 
 ### Install
 
+dnstm is fully offline — the binary never makes network calls. You copy all binaries to the server manually (e.g. via SCP).
+
 ```bash
-curl -sSL https://raw.githubusercontent.com/net2share/dnstm/main/install.sh | sudo bash
+# 1. Copy dnstm and transport binaries to the server
+scp dnstm-linux-amd64 root@server:~/dnstm
+scp dnstt-server slipstream-server ssserver microsocks sshtun-user root@server:/usr/local/bin/
+
+# 2. Install
+ssh root@server
+chmod +x ~/dnstm
+sudo bash install.sh ./dnstm
 ```
+
+Or manually:
+```bash
+sudo cp dnstm /usr/local/bin/dnstm
+sudo chmod +x /usr/local/bin/dnstm
+sudo dnstm install
+```
+
+Transport binaries (`dnstt-server`, `slipstream-server`, `ssserver`, `microsocks`, `sshtun-user`) must be placed in `/usr/local/bin/` before or after running `dnstm install`. Missing binaries produce warnings but don't block installation.
 
 ### Configuration Methods
 
@@ -188,7 +206,6 @@ sudo dnstm router status          # View router and tunnel status
 sudo dnstm tunnel list            # List all tunnels
 sudo dnstm tunnel logs -t <tag>   # View tunnel logs
 sudo dnstm router logs            # View router logs (multi-mode)
-sudo dnstm update                 # Check for and install updates
 sudo dnstm uninstall              # Remove all components
 ```
 

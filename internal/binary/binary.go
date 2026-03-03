@@ -1,18 +1,13 @@
-// Package binary provides binary download and management for external tools.
+// Package binary provides binary management for external tools.
 package binary
 
 import (
-	"archive/tar"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
-
-	"github.com/net2share/dnstm/internal/log"
-	"github.com/ulikunitz/xz"
 )
 
 // BinaryType identifies a binary.
@@ -32,26 +27,20 @@ const (
 	BinarySSLocal          BinaryType = "sslocal"
 )
 
-// BinaryDef defines how to obtain a binary.
+// BinaryDef defines a binary and how to locate it.
 type BinaryDef struct {
 	Type          BinaryType
 	EnvVar        string              // Environment variable for custom path
-	URLPattern    string              // Download URL pattern with {version}, {os}, {arch} placeholders
 	PinnedVersion string              // Expected version for this dnstm release
-	Archive       bool                // If true, URL points to an archive
-	ArchiveDir    string              // Directory inside archive where binary is located
 	Platforms     map[string][]string // Supported os -> []arch
-	SkipUpdate    bool                // If true, skip in update process
 }
 
 // DefaultBinaries contains definitions for all supported binaries.
 var DefaultBinaries = map[BinaryType]BinaryDef{
 	// Server binaries - versions pinned per dnstm release
 	BinaryDNSTTServer: {
-		Type:       BinaryDNSTTServer,
-		EnvVar:     "DNSTM_DNSTT_SERVER_PATH",
-		URLPattern: "https://github.com/net2share/dnstt/releases/download/latest/dnstt-server-{os}-{arch}{ext}",
-		SkipUpdate: true, // No active maintenance, skip updates
+		Type:   BinaryDNSTTServer,
+		EnvVar: "DNSTM_DNSTT_SERVER_PATH",
 		Platforms: map[string][]string{
 			"linux":   {"amd64", "arm64"},
 			"darwin":  {"amd64", "arm64"},
@@ -61,7 +50,6 @@ var DefaultBinaries = map[BinaryType]BinaryDef{
 	BinarySlipstreamServer: {
 		Type:          BinarySlipstreamServer,
 		EnvVar:        "DNSTM_SLIPSTREAM_SERVER_PATH",
-		URLPattern:    "https://github.com/net2share/slipstream-rust-build/releases/download/{version}/slipstream-server-{os}-{arch}",
 		PinnedVersion: "v2026.02.05",
 		Platforms: map[string][]string{
 			"linux": {"amd64", "arm64"},
@@ -70,9 +58,7 @@ var DefaultBinaries = map[BinaryType]BinaryDef{
 	BinarySSServer: {
 		Type:          BinarySSServer,
 		EnvVar:        "DNSTM_SSSERVER_PATH",
-		URLPattern:    "https://github.com/shadowsocks/shadowsocks-rust/releases/download/{version}/shadowsocks-{version}.{ssarch}.tar.xz",
 		PinnedVersion: "v1.24.0",
-		Archive:       true,
 		Platforms: map[string][]string{
 			"linux":  {"amd64", "arm64"},
 			"darwin": {"amd64", "arm64"},
@@ -81,7 +67,6 @@ var DefaultBinaries = map[BinaryType]BinaryDef{
 	BinaryMicrosocks: {
 		Type:          BinaryMicrosocks,
 		EnvVar:        "DNSTM_MICROSOCKS_PATH",
-		URLPattern:    "https://github.com/net2share/microsocks-build/releases/download/{version}/microsocks-{microsocksarch}",
 		PinnedVersion: "v1.0.5",
 		Platforms: map[string][]string{
 			"linux": {"amd64", "arm64"},
@@ -90,7 +75,6 @@ var DefaultBinaries = map[BinaryType]BinaryDef{
 	BinarySSHTunUser: {
 		Type:          BinarySSHTunUser,
 		EnvVar:        "DNSTM_SSHTUN_USER_PATH",
-		URLPattern:    "https://github.com/net2share/sshtun-user/releases/download/{version}/sshtun-user-linux-{arch}",
 		PinnedVersion: "v0.3.5",
 		Platforms: map[string][]string{
 			"linux": {"amd64", "arm64"},
@@ -101,8 +85,7 @@ var DefaultBinaries = map[BinaryType]BinaryDef{
 	BinaryDNSTTClient: {
 		Type:          BinaryDNSTTClient,
 		EnvVar:        "DNSTM_TEST_DNSTT_CLIENT_PATH",
-		URLPattern:    "https://github.com/net2share/dnstt/releases/download/latest/dnstt-client-{os}-{arch}{ext}",
-		PinnedVersion: "latest", // Manual bump only
+		PinnedVersion: "latest",
 		Platforms: map[string][]string{
 			"linux":   {"amd64", "arm64"},
 			"darwin":  {"amd64", "arm64"},
@@ -112,8 +95,7 @@ var DefaultBinaries = map[BinaryType]BinaryDef{
 	BinarySlipstreamClient: {
 		Type:          BinarySlipstreamClient,
 		EnvVar:        "DNSTM_TEST_SLIPSTREAM_CLIENT_PATH",
-		URLPattern:    "https://github.com/net2share/slipstream-rust-build/releases/download/{version}/slipstream-client-{os}-{arch}",
-		PinnedVersion: "v2026.02.05", // Manual bump only
+		PinnedVersion: "v2026.02.05",
 		Platforms: map[string][]string{
 			"linux": {"amd64", "arm64"},
 		},
@@ -121,9 +103,7 @@ var DefaultBinaries = map[BinaryType]BinaryDef{
 	BinarySSLocal: {
 		Type:          BinarySSLocal,
 		EnvVar:        "DNSTM_TEST_SSLOCAL_PATH",
-		URLPattern:    "https://github.com/shadowsocks/shadowsocks-rust/releases/download/{version}/shadowsocks-{version}.{ssarch}.tar.xz",
-		PinnedVersion: "v1.23.0", // Manual bump only
-		Archive:       true,
+		PinnedVersion: "v1.23.0",
 		Platforms: map[string][]string{
 			"linux":  {"amd64", "arm64"},
 			"darwin": {"amd64", "arm64"},
@@ -138,7 +118,7 @@ const (
 	DefaultTestBinDir = "tests/.testbin"
 )
 
-// Manager handles binary resolution and downloading.
+// Manager handles binary resolution.
 type Manager struct {
 	binDir string
 	os     string
@@ -190,7 +170,7 @@ func getTestBinDir() string {
 	return DefaultTestBinDir
 }
 
-// GetPath returns the path to an existing binary. Does NOT download.
+// GetPath returns the path to an existing binary.
 // Resolution order:
 // 1. Environment variable (if set and file exists)
 // 2. Already in binDir
@@ -225,54 +205,12 @@ func (m *Manager) GetPath(binType BinaryType) (string, error) {
 		return binPath, nil
 	}
 
-	return "", fmt.Errorf("binary %s not found (run 'dnstm install' or set %s)", binType, def.EnvVar)
+	return "", fmt.Errorf("binary %s not found at %s (set %s or copy binary to that path)", binType, binPath, def.EnvVar)
 }
 
-// EnsureInstalled ensures a binary is available, downloading if necessary.
-// This should be called by install commands and test setup.
+// EnsureInstalled checks that a binary is available. Returns its path or an error.
 func (m *Manager) EnsureInstalled(binType BinaryType) (string, error) {
-	def, ok := DefaultBinaries[binType]
-	if !ok {
-		return "", fmt.Errorf("unknown binary type: %s", binType)
-	}
-
-	// Check if platform is supported
-	if !m.isPlatformSupported(def) {
-		return "", fmt.Errorf("binary %s not supported on %s/%s", binType, m.os, m.arch)
-	}
-
-	// Check environment variable first
-	if def.EnvVar != "" {
-		if envPath := os.Getenv(def.EnvVar); envPath != "" {
-			if _, err := os.Stat(envPath); err == nil {
-				log.Debug("binary %s: using path from env var %s: %s", binType, def.EnvVar, envPath)
-				return envPath, nil
-			}
-			return "", fmt.Errorf("env var %s set to %s but file not found", def.EnvVar, envPath)
-		}
-	}
-
-	// Check if already in binDir
-	binPath := filepath.Join(m.binDir, string(binType))
-	if m.os == "windows" {
-		binPath += ".exe"
-	}
-	if _, err := os.Stat(binPath); err == nil {
-		log.Debug("binary %s: using cached binary: %s", binType, binPath)
-		return binPath, nil
-	}
-
-	// Download if URL pattern is provided
-	if def.URLPattern == "" {
-		return "", fmt.Errorf("binary %s not found and no download URL available (install manually or set %s)", binType, def.EnvVar)
-	}
-
-	log.Debug("binary %s: downloading to %s", binType, binPath)
-	if err := m.download(def, binPath, def.PinnedVersion); err != nil {
-		return "", fmt.Errorf("failed to download %s: %w", binType, err)
-	}
-
-	return binPath, nil
+	return m.GetPath(binType)
 }
 
 // EnsureDir creates the binary directory if it doesn't exist.
@@ -297,196 +235,6 @@ func (m *Manager) isPlatformSupported(def BinaryDef) bool {
 		}
 	}
 	return false
-}
-
-// download fetches a binary from its URL using the specified version.
-func (m *Manager) download(def BinaryDef, destPath, version string) error {
-	if err := m.EnsureDir(); err != nil {
-		return err
-	}
-
-	url := m.buildURLWithVersion(def, version)
-
-	resp, err := http.Get(url)
-	if err != nil {
-		return fmt.Errorf("HTTP request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, resp.Status)
-	}
-
-	if def.Archive {
-		return m.extractFromArchive(resp.Body, def, destPath)
-	}
-
-	return m.saveToFile(resp.Body, destPath)
-}
-
-// buildURLWithVersion constructs the download URL with a specific version.
-func (m *Manager) buildURLWithVersion(def BinaryDef, version string) string {
-	url := def.URLPattern
-
-	// Version replacement
-	if version != "" {
-		url = strings.ReplaceAll(url, "{version}", version)
-	}
-
-	// Standard replacements
-	url = strings.ReplaceAll(url, "{os}", m.os)
-	url = strings.ReplaceAll(url, "{arch}", m.arch)
-
-	// Windows extension
-	ext := ""
-	if m.os == "windows" {
-		ext = ".exe"
-	}
-	url = strings.ReplaceAll(url, "{ext}", ext)
-
-	// Shadowsocks uses different arch naming
-	ssArch := m.getShadowsocksArch()
-	url = strings.ReplaceAll(url, "{ssarch}", ssArch)
-
-	// Microsocks uses different arch naming
-	microsocksArch := m.getMicrosocksArch()
-	url = strings.ReplaceAll(url, "{microsocksarch}", microsocksArch)
-
-	return url
-}
-
-// getShadowsocksArch returns the shadowsocks-rust architecture string.
-func (m *Manager) getShadowsocksArch() string {
-	switch {
-	case m.os == "linux" && m.arch == "amd64":
-		return "x86_64-unknown-linux-gnu"
-	case m.os == "linux" && m.arch == "arm64":
-		return "aarch64-unknown-linux-gnu"
-	case m.os == "darwin" && m.arch == "amd64":
-		return "x86_64-apple-darwin"
-	case m.os == "darwin" && m.arch == "arm64":
-		return "aarch64-apple-darwin"
-	case m.os == "windows" && m.arch == "amd64":
-		return "x86_64-pc-windows-msvc"
-	default:
-		return fmt.Sprintf("%s-unknown-%s", m.arch, m.os)
-	}
-}
-
-// getMicrosocksArch returns the microsocks architecture string.
-func (m *Manager) getMicrosocksArch() string {
-	libc := m.detectLibc()
-
-	if libc == "glibc" {
-		switch m.arch {
-		case "amd64":
-			return "x86_64-linux-gnu"
-		case "arm64":
-			return "aarch64-linux-gnu"
-		}
-	}
-
-	// musl builds for Alpine or fallback
-	switch m.arch {
-	case "amd64":
-		return "x86_64-linux-musl"
-	case "arm64":
-		return "aarch64-linux-musl"
-	case "arm":
-		return "arm-linux-musleabihf"
-	case "386":
-		return "i686-linux-musl"
-	default:
-		return "x86_64-linux-musl"
-	}
-}
-
-// detectLibc detects whether the system uses glibc or musl.
-func (m *Manager) detectLibc() string {
-	// Check for Alpine Linux (uses musl)
-	if _, err := os.Stat("/etc/alpine-release"); err == nil {
-		return "musl"
-	}
-
-	// Check for glibc indicators
-	if _, err := os.Stat("/lib/x86_64-linux-gnu"); err == nil {
-		return "glibc"
-	}
-	if _, err := os.Stat("/lib/aarch64-linux-gnu"); err == nil {
-		return "glibc"
-	}
-	if _, err := os.Stat("/lib64/ld-linux-x86-64.so.2"); err == nil {
-		return "glibc"
-	}
-
-	// Default to glibc for most systems
-	return "glibc"
-}
-
-// saveToFile writes content to a file with executable permissions.
-func (m *Manager) saveToFile(r io.Reader, path string) error {
-	out, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-
-	_, err = io.Copy(out, r)
-	return err
-}
-
-// extractFromArchive extracts a specific binary from a tar.xz archive.
-func (m *Manager) extractFromArchive(r io.Reader, def BinaryDef, destPath string) error {
-	// Decompress xz
-	xzReader, err := xz.NewReader(r)
-	if err != nil {
-		return fmt.Errorf("failed to create xz reader: %w", err)
-	}
-
-	// Read tar
-	tarReader := tar.NewReader(xzReader)
-
-	binaryName := string(def.Type)
-	if m.os == "windows" {
-		binaryName += ".exe"
-	}
-
-	for {
-		header, err := tarReader.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return fmt.Errorf("failed to read tar: %w", err)
-		}
-
-		// Look for the binary (may be in a subdirectory)
-		baseName := filepath.Base(header.Name)
-		if baseName == binaryName && header.Typeflag == tar.TypeReg {
-			return m.saveToFile(tarReader, destPath)
-		}
-	}
-
-	return fmt.Errorf("binary %s not found in archive", binaryName)
-}
-
-// DownloadVersion downloads a specific version of a binary, replacing any existing one.
-func (m *Manager) DownloadVersion(binType BinaryType, version string) error {
-	def, ok := DefaultBinaries[binType]
-	if !ok {
-		return fmt.Errorf("unknown binary type: %s", binType)
-	}
-
-	if !m.isPlatformSupported(def) {
-		return fmt.Errorf("binary %s not supported on %s/%s", binType, m.os, m.arch)
-	}
-
-	binPath := filepath.Join(m.binDir, string(binType))
-	if m.os == "windows" {
-		binPath += ".exe"
-	}
-
-	return m.download(def, binPath, version)
 }
 
 // GetDef returns the binary definition for a binary type.

@@ -21,8 +21,8 @@ func init() {
 	Register(&Action{
 		ID:           ActionInstall,
 		Use:          "install",
-		Short:        "Install transport binaries and configure system",
-		Long:         "Install all transport binaries and configure the system for DNS tunneling.\n\nThis will:\n  - Create dnstm system user\n  - Initialize router configuration and directories\n  - Set operating mode (defaults to single)\n  - Create DNS router service\n  - Download and install transport binaries\n  - Configure firewall rules (port 53 UDP/TCP)\n\nOptionally use --mode to set the operating mode:\n  single  Single-tunnel mode (default) - one tunnel at a time\n  multi   Multi-tunnel mode - multiple tunnels with DNS router",
+		Short:        "Verify transport binaries are present and configure system",
+		Long:         "Verify transport binaries and configure the system for DNS tunneling.\n\nThis will:\n  - Create dnstm system user\n  - Initialize router configuration and directories\n  - Set operating mode (defaults to single)\n  - Create DNS router service\n  - Verify transport binaries are present\n  - Configure firewall rules (port 53 UDP/TCP)\n\nTransport binaries must be copied to /usr/local/bin manually (e.g. via SCP).\n\nOptionally use --mode to set the operating mode:\n  single  Single-tunnel mode (default) - one tunnel at a time\n  multi   Multi-tunnel mode - multiple tunnels with DNS router",
 		MenuLabel:    "Install",
 		RequiresRoot: true,
 		Inputs: []InputField{
@@ -57,38 +57,6 @@ func init() {
 		RequiresInstalled: true,
 	})
 
-	// Register update action
-	Register(&Action{
-		ID:                ActionUpdate,
-		Use:               "update",
-		Short:             "Check for and install updates",
-		Long:              "Check for available updates to dnstm and transport binaries.\n\nThis will:\n  - Check for a newer version of dnstm\n  - Check for updates to slipstream-server, ssserver, microsocks, sshtun-user\n  - Stop affected services before updating\n  - Download and install new versions\n  - Restart previously running services\n\nFlags:\n  --force      Skip confirmation prompts\n  --self       Only update dnstm\n  --binaries   Only update transport binaries\n  --check      Dry-run: show available updates without installing",
-		MenuLabel:         "Update",
-		RequiresRoot:      true,
-		RequiresInstalled: true,
-		Inputs: []InputField{
-			{
-				Name:  "force",
-				Label: "Skip confirmation prompts",
-				Type:  InputTypeBool,
-			},
-			{
-				Name:  "self",
-				Label: "Only update dnstm",
-				Type:  InputTypeBool,
-			},
-			{
-				Name:  "binaries",
-				Label: "Only update transport binaries",
-				Type:  InputTypeBool,
-			},
-			{
-				Name:  "check",
-				Label: "Check for updates without installing",
-				Type:  InputTypeBool,
-			},
-		},
-	})
 }
 
 // SetSystemHandler sets the handler for a system action.
